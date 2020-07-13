@@ -2,9 +2,16 @@
 #import "RNZoomUsBridgeEventEmitter.h"
 #import <MobileRTC/MobileRTC.h>
 
+@interface RNZoomUsManager (){
+    NSString* url;
+}
+
+@end
 static RNZoomUsManager *sharedInstance = nil;
 
 @implementation RNZoomUsManager
+
+
 
 NSString *const kSDKDomain = @"zoom.us";
 
@@ -24,7 +31,7 @@ static RNZoomUsBridgeEventEmitter *internalEmitter = nil;
   [context setDomain:kSDKDomain];
   [context setEnableLog:NO];
   [[MobileRTC sharedRTC] initialize:context];
-
+//[self onInitMeetingView];
   MobileRTCAuthService *authService = [[MobileRTC sharedRTC] getAuthService];
   if (authService) {
     NSLog(@"SDK LOG - Auth Requested");
@@ -34,8 +41,8 @@ static RNZoomUsBridgeEventEmitter *internalEmitter = nil;
     [authService sdkAuth];
     completion(1);
   }
-  
 }
+
 
 - (void)startMeeting:(NSString *)meetingId userName:(NSString *)userName userId:(NSString *)userId userZak:(NSString *)userZak completion:(void (^_Nonnull)(NSUInteger resultCode))completion {
   
@@ -57,17 +64,19 @@ static RNZoomUsBridgeEventEmitter *internalEmitter = nil;
     }
 }
 
-- (void)joinMeeting:(NSString *)meetingId userName:(NSString *)userName password:(NSString *)password completion:(void (^_Nonnull)(NSUInteger resultCode))completion {
+- (void)joinMeeting:(NSString *)meetingId userName:(NSString *)userName password:(NSString *)password meetingUrl:(NSString *)meetingUrl completion:(void (^_Nonnull)(NSUInteger resultCode))completion {
   NSLog(@"joinMeeting called on native module");
     
   MobileRTCMeetingService *ms = [[MobileRTC sharedRTC] getMeetingService];
+//  [[MobileRTC sharedRTC] getMeetingSettings].enableCustomMeeting = YES;
+
   if (ms) {
     ms.delegate = self;
-
+      url = meetingUrl;
     NSDictionary *paramDict = @{
     kMeetingParam_Username: userName,
     kMeetingParam_MeetingNumber: meetingId,
-    kMeetingParam_MeetingPassword: password ? password : @""
+    kMeetingParam_MeetingPassword: password ? password : @"",
     };
 
     MobileRTCMeetError joinMeetingResult = [ms joinMeetingWithDictionary:paramDict];
@@ -89,10 +98,14 @@ static RNZoomUsBridgeEventEmitter *internalEmitter = nil;
 
 - (void)leaveMeeting {
   MobileRTCMeetingService *ms = [[MobileRTC sharedRTC] getMeetingService];
+  NSLog(@"Leaving now");
   if (!ms) return;
+  NSLog(@"Leaving now ------ : ");
+    [self onDestroyMeetingView];
   [ms leaveMeetingWithCmd:LeaveMeetingCmd_Leave];
   RNZoomUsBridgeEventEmitter *emitter = [RNZoomUsBridgeEventEmitter allocWithZone: nil];
   [emitter userEndedTheMeeting:@{}];
+
 }
 
 - (void)onMeetingStateChange:(MobileRTCMeetingState)state {
@@ -101,6 +114,15 @@ static RNZoomUsBridgeEventEmitter *internalEmitter = nil;
   if (state == MobileRTCMeetingState_InMeeting) {
       RNZoomUsBridgeEventEmitter *emitter = [RNZoomUsBridgeEventEmitter allocWithZone: nil];
       [emitter userJoinedAMeeting:@{}];
+//      [self onInitMeetingView];
+      double delayInSeconds = 1.0;
+      dispatch_time_t popTime = dispatch_time(DISPATCH_TIME_NOW, delayInSeconds * NSEC_PER_SEC);
+      dispatch_after(popTime, dispatch_get_main_queue(), ^(void){
+      [self onDestroyMeetingView];
+          
+      [self onInitMeetingView];
+//     [self doSometingWithObject:obj1 andAnotherObject:obj2];
+      });
   }
 }
 
@@ -111,9 +133,7 @@ static RNZoomUsBridgeEventEmitter *internalEmitter = nil;
 
     RNZoomUsBridgeEventEmitter *emitter = [RNZoomUsBridgeEventEmitter allocWithZone: nil];
     [emitter userSDKInitilized:resultDict];
-
     [[[MobileRTC sharedRTC] getAuthService] setDelegate:self];
-
     if (returnValue != MobileRTCAuthError_Success)
     {
         NSLog(@"SDK LOG - Auth Error'd %d", returnValue);
@@ -136,7 +156,49 @@ if (errorCode != MobileRTCMeetError_Success) {
     RNZoomUsBridgeEventEmitter *emitter = [RNZoomUsBridgeEventEmitter allocWithZone: nil];
     [emitter meetingErrored:@{}];
 }
-
 }
+
+- (void)onInitMeetingView {
+  // Create & Present View Controller
+  NSLog(@"onInitMeetingView....");
+
+    MobileRTCMeetingService *ms = [[MobileRTC sharedRTC] getMeetingService];
+    UIView *v = [ms meetingView];
+  
+    int x = 0, y = 0;
+    
+    if (@available(iOS 11.0, *)) {
+        x = v.safeAreaInsets.top;
+        y = v.safeAreaInsets.bottom;
+        NSLog(@"%d, %d", x,  y);
+    } else {
+
+    }
+    UIWebView *sv = [[UIWebView alloc] initWithFrame:CGRectMake(0, (60 + x), v.frame.size.width, v.frame.size.height - 120 - x - y )];
+    NSLog(@"%f", v.frame.size.height - (120 + x + y));
+    [sv loadRequest:[[NSURLRequest alloc] initWithURL:[NSURL URLWithString: url]]];
+    sv.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleBottomMargin;
+    sv.backgroundColor = [UIColor clearColor];
+    sv.tag = -1000;
+    [sv setOpaque:NO];
+    sv.alpha = 1;
+    [v addSubview:sv];
+    
+}
+
+- (void)onDestroyMeetingView
+{
+  // Remove & Dismiss View Controller
+  NSLog(@"onDestroyMeetingView....");
+    
+    MobileRTCMeetingService *ms = [[MobileRTC sharedRTC] getMeetingService];
+    UIView * v = [ms meetingView];
+    UIView* subView = [v viewWithTag:-1000];
+    if(subView != nil){
+        [subView removeFromSuperview];
+        NSLog(@"Destorying webview");
+    }
+}
+
 
 @end
